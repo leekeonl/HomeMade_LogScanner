@@ -1,0 +1,125 @@
+[
+  {
+    "id": "a1b2c3d4",
+    "title": "L1 PM5 Shearing Pin Issue",
+    "tags": [
+      "PR-214602",
+      "PM",
+      "shearing pin",
+      "singlePlanMotion",
+      "TM reboot"
+    ],
+    "reproduction": "1. Configure PM5 as Single Plan\n2. Launch TM and PM3\n3. Exit PM5 and the configuration\n4. Run wafer through PM3",
+    "log_patterns": [
+      "MPMPositionChange",
+      "RobotCommandSent GOTO N 3",
+      "WaferLifter"
+    ],
+    "analysis": "When singlePlanMotio option change it requires TM and PM must both reboot. Log shows only PM was rebooted, not TM. This causes the shearing pin fault when robot tries to pick wafer from misaligned position.",
+    "created_at": "2026-03-31T11:32:00",
+    "updated_at": "2026-03-31T11:32:00"
+  },
+  {
+    "id": "e5f6g7h8",
+    "title": "L1 PM3 AEI Baseline File Missing",
+    "tags": [
+      "PM",
+      "Hydra",
+      "AEI",
+      "asNumber",
+      "baseline"
+    ],
+    "reproduction": "1. Load new recipe without setting HydraBaselineAEIFilename\n2. Run wafer through PM3\n3. Observe PreEtch Step 31 failure",
+    "log_patterns": [
+      "HydraPreEtchReporting",
+      "asNumber",
+      "HydraPredictedDifferenceAEIMap",
+      "BaselineAEI"
+    ],
+    "analysis": "HydraBaselineAEIFilename left empty in recipe. AEI Predicted Difference Map tries to compute (current - baseline) but baseline is nil. nil.asNumber raises 'Message not understood: #asNumber'. Fix: register baseline AEI file in recipe config or disable HydraAutoCalEnable.",
+    "created_at": "2026-03-28T09:15:00",
+    "updated_at": "2026-03-28T09:15:00"
+  },
+  {
+    "id": "h1b1p1r1",
+    "title": "JIT Stuck due to WAC Disabled Configuration",
+    "tags": [
+      "PR-186313",
+      "Scheduler",
+      "WAC",
+      "JIT",
+      "JITCanSendNextWafer",
+      "wafer movement"
+    ],
+    "reproduction": "1. Set flow with WAC\n2. Select WAC as disabled in configuration\n3. Start process and observe next wafer advancement",
+    "log_patterns": [
+      "receiveDisablingTags",
+      "#WAC",
+      "JIT misjudgment"
+    ],
+    "analysis": "Flow with WAC selected as disabled caused JIT misjudgment, preventing the next wafer from advancing[cite: 2]. Solution is to check for receiveDisablingTags #WAC when querying for WAC time",
+    "created_at": "2025-04-16T10:00:00",
+    "updated_at": "2025-04-16T10:00:00"
+  },
+  {
+    "id": "h1b1p1r2",
+    "title": "JIT Stoppage on Step 0 Interruption and Abort Recovery",
+    "tags": [
+      "PR-186236",
+      "Scheduler",
+      "JIT",
+      "Abort and Remove",
+      "JITCanSendNextWafer",
+      "Step 0"
+    ],
+    "reproduction": "1. Run flow with no WAC\n2. Create redAlarm in PM before start of Process (Step 0)\n3. Select 'Abort and Remove' in alarm recovery",
+    "log_patterns": [
+      "scheduleNextJITWhenProcessOrWACResumedFor:",
+      "interrupt at Process"
+    ],
+    "analysis": "New JIT rule did not consider Process fail/interrupted abort and remove recovery option at step 0[cite: 3]. Fixed by updating logic to check if there is WAC after an interrupt at Process",
+    "created_at": "2025-04-16T11:00:00",
+    "updated_at": "2025-04-16T11:00:00"
+  },
+  {
+    "id": "h1b1p1r3",
+    "title": "JIT Rule Missing WAC Abort Recovery at Step 0",
+    "tags": [
+      "PR-186221",
+      "Scheduler",
+      "JIT",
+      "WAC",
+      "JITCanSendNextWafer",
+      "Abort Recovery"
+    ],
+    "reproduction": "1. Run flow with PreWAC/WAC/PostWAC\n2. Create redAlarm in PM before start of WAC cycles (Step 0)\n3. Select 'Abort PreWAC/WAC/PostWAC' in alarm recovery",
+    "log_patterns": [
+      "#WACSkippedByUserAlarmSet",
+      "#WACSkippedByUserAlarmCleared",
+      "Wac = 0"
+    ],
+    "analysis": "JIT rule failed to handle abort recovery specifically for PreWAC/WAC/PostWAC cycles interrupted at step 0[cite: 4, 5]. Logic updated to check for Wac = 0 and handle associated alarm events",
+    "created_at": "2025-04-16T12:00:00",
+    "updated_at": "2025-04-16T12:00:00"
+  },
+  {
+    "id": "f1c1p1r1",
+    "title": "VC Job Wafer Premature Pick and Place causing Abort",
+    "tags": [
+      "PR-185465",
+      "VC Job",
+      "JIT",
+      "PreConditionWAC",
+      "Pick and Place"
+    ],
+    "reproduction": "1. Manually start AEW (PreWac = 60s)\n2. Run production job with VC material (VC93/VC94)\n3. Observe if Pick/Place starts before PreConditionWAC tag",
+    "log_patterns": [
+      "receiveDisablingTags IdentitySet (#PreConditionWAC)",
+      "Retract material causing OPs abort",
+      "JITValueForPickVC"
+    ],
+    "analysis": "Job wafer started Pick and Place too early (before PreWac start), causing scheduler to abort operations when PreWac tag was added to prevent slot door timeouts[cite: 8, 9, 10]. Solution ensures #PreConditionWAC happens before Pick/Place starts[cite: 21].",
+    "created_at": "2025-02-28T00:44:00",
+    "updated_at": "2025-04-10T17:32:00"
+  }
+]

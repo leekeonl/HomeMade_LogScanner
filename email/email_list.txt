@@ -1,0 +1,10 @@
+# email_list.txt — Log Analysis Report Recipients
+# One email address per line
+# Lines starting with # are ignored
+
+# Engineers
+engineer1@company.com
+engineer2@company.com
+
+# Manager
+manager@company.com
