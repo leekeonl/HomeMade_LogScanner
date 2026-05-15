@@ -147,7 +147,7 @@ def extract_summary_from_csvs(csv_files: list) -> dict:
 
     def sev(err):
         e = err.lower()
-        if any(k in e for k in ["message not understood","exception","hardtol",
+        if any(k in e for k in ["message not understood","exception","hard tolerance",
                                   "jit","wacskipped","abort"]): return "error"
         if any(k in e for k in ["alarm","warning","tolerance","low","below",
                                   "pulse sync"]): return "warning"
@@ -220,7 +220,7 @@ Open the attached HTML file for the full interactive report.
 
     def sev_cls(err):
         e = err.lower()
-        if any(k in e for k in ["message not understood","exception","hardtol",
+        if any(k in e for k in ["message not understood","exception","hard tolerance",
                                   "jit","wacskipped","abort"]): return "error"
         if any(k in e for k in ["alarm","warning","tolerance","low","below",
                                   "pulse sync"]): return "warning"

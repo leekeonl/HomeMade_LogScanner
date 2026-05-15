@@ -360,10 +360,9 @@ def generate_html_report(analyses, report_path, scan_range_from, scan_range_to,
 
     def sev(a):
         e = a["Error"].lower()
-        if any(k in e for k in ["message not understood","exception","hardtol"]): return "error"
-        if any(k in e for k in ["alarm","warning","warningset",
-                                  "matthew play","matthew watch",
-                                  "matthew program","matthew happy"]): return "warning"
+        if any(k in e for k in ["message not understood","exception","hard tolerance"]): return "error"
+        if any(k in e for k in ["alarm","warning","warningset","tolerance","low",
+                                  "below","pulse sync","idex"]): return "warning"
         return "info"
 
     for a in analyses: a["_sev"] = sev(a)
