@@ -1,0 +1,284 @@
+# Log Analysis Tool
+
+업무에서 반도체 장비 로그를 수동으로 분석하던 워크플로우를
+자동화한 Python 도구입니다. 매일 반복되던 페인 포인트 — 여러 장비
+호스트에서 로그를 수집하고, 알려진 에러 패턴을 검색해서 분석 리포트를
+만드는 작업 — 를 해결하기 위해 만들었고, 동시에 stdlib만으로 만든 API
+클라이언트, 가중치 기반 케이스 검색, 오프라인 환경에서도 동작하는
+인터랙티브 HTML 리포트 같은 설계 패턴을 실험해본 프로젝트입니다.
+
+---
+
+## 문제 (Problem)
+
+매일 아침마다 장비 이슈를 트러블슈팅하려면 수동으로 다음 작업을 해야
+했습니다:
+
+1. 각 장비 호스트에 개별적으로 SSH 또는 FTP 접속
+2. `DebugLogs/`와 `EventLogs/` 폴더를 뒤져서 어제 날짜의 파일 찾기
+3. 텍스트 에디터로 파일을 열어서 키워드 검색 (`alarm`, `error`,
+   `Message not understood` 등)
+4. 똑같은 알람이 수십 번 발생한 경우 머릿속에서 중복 제거
+5. 기억에 의존한 교차 참조: "이 PR-186313 이슈, 예전에 본 적 있지
+   않나?"
+6. 결과를 이메일로 정리하고 관련 로그 라인을 복사-붙여넣기
+
+장비 1대당 30분~1시간이 걸렸고, 매일 5~10대를 확인해야 했습니다. 그러면
+**하루에 약 5시간이 그냥 로그 트리아지로** 사라졌고, 실제 분석은 그
+다음에 시작됐습니다. 게다가 노하우는 엔지니어의 머릿속에만 있어서 —
+누군가 떠나면 그동안 쌓아온 패턴 인식도 함께 사라졌습니다.
+
+## 해결 (Solution)
+
+|                                      | Before              | After                  |
+| ------------------------------------ | ------------------- | ---------------------- |
+| 장비 1대당 소요 시간                 | ~30~60분            | ~3분                   |
+| 일일 트리아지 (5~10대)               | ~5시간              | ~10분                  |
+| 중복 알람 노이즈 (78번 발생)         | 수동 중복 제거      | 90% 유사도 자동 그룹핑 |
+| 과거 케이스 재발 시                  | 기억 의존           | KB에서 자동 매칭       |
+| 리포트 전달                          | 손으로 쓴 이메일    | 자동 생성 + 발송       |
+
+---
+
+## 주요 기능
+
+- **멀티 호스트 FTP 수집** — `ThreadPoolExecutor`로 최대 8대 장비를 병렬
+  스캔. 신규 파일만 다운로드하고, 이전 실행에서 캐시된 파일은 재사용합니다.
+- **90% 유사도 그룹핑** — 같은 `IntensityOutOfThresholdLimitSet` 알람이
+  78번 발생해도 `Count: 78` 인 단일 항목으로 축소됩니다. Python의
+  `SequenceMatcher`로 같은 장비 내 라인 내용을 비교합니다.
+- **케이스 KB 기반 Claude AI 분석** — 각 이슈 그룹마다 지식 베이스에서
+  가장 관련 있는 과거 케이스 상위 3개를 가져와서 시스템 프롬프트에
+  주입합니다. AI 결과는 해당 케이스 ID와 PR 번호를 직접 참조합니다.
+- **독립 실행 인터랙티브 HTML 리포트** — 3-탭 사이드바
+  (Issues / Keywords / Cases), 심각도 필터링, 검색, 이슈와 매칭 케이스
+  간 클릭-스루 내비게이션. 단일 파일이고 인터넷 없이도 열립니다.
+- **케이스 지식 베이스 (`cases.json`)** — 분석된 이슈를 재현 단계,
+  태그(PR 번호), 핵심 로그 패턴과 함께 재사용 가능한 케이스로 저장. 이후
+  스캔에서 이 KB와 자동으로 매칭됩니다.
+- **이메일 리포팅** — 별도 `email_report.py`가 최신 스캔 결과물을 찾아서
+  스타일이 적용된 HTML 요약 + CSV 첨부를 `email_list.txt` 수신자에게
+  발송합니다.
+- **API 없이 테스트 모드** — `scan_count_test.py`는 API 키가 없을 때
+  미리 작성된 더미 분석을 반환해서 FTP, 그룹핑, HTML, KB 로직을 토큰 소비
+  없이 검증할 수 있습니다.
+
+---
+
+## 설계 결정 (Design Decisions)
+
+몇 가지 짚어볼 만한 선택들:
+
+- **순수 stdlib Anthropic 클라이언트 (SDK 없이 urllib만).** 회사 장비
+  PC들은 부분적으로 air-gapped 환경이고 `anthropic` Python 패키지를
+  설치하기 어려운 경우가 많습니다. API 클라이언트를 `urllib.request`로
+  직접 작성하면 배포 시 문제가 될 만한 요소가 하나 줄어들고, 유일한 의존
+  패키지는 터미널 색상용 `colorama` 하나뿐입니다.
+- **임베딩이 아닌 가중치 기반 키워드 스코어링.** 지식 베이스는 약 50개
+  케이스 수준 — 시맨틱 임베딩은 오버킬이고 벡터 DB 의존성이 추가됩니다.
+  대신 단순한 스코어링 규칙(`log_pattern 매치 = +10`, `tag 매치 = +5`,
+  `title 단어 = +2`)으로 상위 3개를 빠르게 오프라인으로 찾습니다.
+  엔지니어들이 태그에 구체적인 패턴을 자연스럽게 적기 때문에 의외로 잘
+  동작합니다.
+- **2단계 파이프라인 (스캔 → 선택적 분석).** 스캔은 CSV를 만들고 이슈를
+  찾아냅니다. AI 분석은 사용자가 이슈별로 직접 선택하는 별도의 인터랙티브
+  단계입니다. 빠른 경로는 빠르게 유지 — API 키가 없어도 스캔 + HTML
+  리포트는 완전히 동작합니다.
+- **독립 단일 파일 HTML 리포트 (웹 서버 불필요).** HTML이 모든 이슈와
+  케이스 데이터를 `<script>` 블록 안에 JSON 리터럴로 임베드하고,
+  바닐라 JS로 렌더링합니다. 빌드 단계 없음, CDN 없음, 서버 없음.
+  엔지니어가 HTML 파일을 이메일로 보내면 받는 사람은 바로 열어볼 수
+  있습니다.
+- **케이스 KB는 일반 JSON (SQLite 아님).** 케이스는 사람이 읽을 수 있고,
+  git으로 추적 가능하고, 어떤 텍스트 에디터로도 편집 가능합니다. HTML
+  리포트에서 케이스를 추가/편집/삭제하면 Blob URL로 업데이트된
+  `cases.json`을 다운로드할 수도 있습니다 — 백엔드 필요 없음.
+- **피처 플래그가 아닌 별도 테스트 변형.** `scan_count_test.py`는 더미
+  분석이 들어간 자체 파일입니다. 운영용 `scan_count.py`를 깔끔하게 유지
+  — `if TEST_MODE:` 같은 분기 없음 — 하면서, 새 사람이 첫날부터 API 키
+  없이 테스트 버전을 돌릴 수 있게 합니다.
+
+---
+
+## 스크린샷
+
+*(스크린샷을 여기에 추가하세요. HTML 리포트의 Issues 탭과 매칭 케이스가
+있는 Cases 탭 두 화면이 보여주기 좋습니다.)*
+
+---
+
+## 요구 사항
+
+- Python 3.10 이상
+- [colorama](https://pypi.org/project/colorama/)
+
+```bash
+pip install -r requirements.txt
+```
+
+다른 모든 라이브러리(`urllib`, `ftplib`, `csv`, `json`, `smtplib`,
+`threading`, `concurrent.futures`)는 Python 표준 라이브러리에 포함되어
+있습니다.
+
+---
+
+## 사용 방법
+
+### 일일 루틴 (FTP 스캔)
+
+```bash
+python scan_count.py        # 장비에서 수집, 리포트 생성
+python email_report.py      # 팀에게 리포트 발송
+```
+
+### 임시 로컬 분석
+
+```bash
+# 로그 파일을 폴더에 복사하고 cd 한 다음:
+python scan_local.py
+```
+
+### 첫 설치 / API 키 없이 테스트
+
+```bash
+python scan_count_test.py   # 더미 AI 분석, 나머지 파이프라인 정상 동작
+```
+
+### 인터랙티브 분석 메뉴
+
+스캔 후 스크립트가 이슈를 1~N 번호로 나열합니다:
+
+| 입력      | 동작                                                          |
+| --------- | ------------------------------------------------------------- |
+| `3`       | 이슈 #3만 분석                                                |
+| `1,5,12`  | 이슈 #1, #5, #12 분석                                         |
+| `all`     | 모든 이슈 분석                                                |
+| `report`  | HTML 리포트와 CSV를 지금 저장 (세션은 유지)                   |
+| `q`       | 종료 (분석된 게 있으면 자동 저장)                             |
+
+---
+
+## 파일 구조
+
+```
+LogAnalysisTool/
+├── scan_count.py           # 운영용: FTP 수집 + AI 분석
+├── scan_count_test.py      # 테스트 변형: 더미 분석, API 키 불필요
+├── scan_local.py           # 로컬: 이미 받아둔 로그 파일 분석
+├── email_report.py         # 스캔 결과물용 독립 이메일 발송기
+├── cases.json              # 케이스 지식 베이스 (시간이 갈수록 누적)
+├── input.txt               # 장비 호스트명/IP (scan_count 전용)
+├── strings.txt             # 검색할 키워드
+├── email_list.txt          # 이메일 수신자
+├── requirements.txt
+└── README.md
+```
+
+### 2단계 파이프라인 아키텍처
+
+```
+scan_logs()                                 # FTP/로컬 → CSV + 이슈 리스트
+    ↓
+[인터랙티브 메뉴: 분석할 이슈 선택]
+    ↓
+analyze_issue(entry)                        # 케이스 KB 컨텍스트로 Claude 호출
+    → find_similar_cases(error_text)        # 가중치 스코어 상위 3개
+    → call_claude_api(prompt + cases)       # urllib → Anthropic API
+    ↓
+generate_html_report() + update_csv()       # 독립 HTML + CSV 갱신
+```
+
+---
+
+## 핵심 알고리즘
+
+### 1. 유사도 그룹핑 (`is_similar`)
+
+거의 동일한 로그 라인은 `SequenceMatcher`로 묶입니다:
+
+```python
+SequenceMatcher(None, line_a, line_b).ratio() >= 0.9
+```
+
+타임스탬프나 wafer ID만 다르고 나머지는 동일한 알람 두 줄은 카운트가
+증가하는 하나의 항목으로 그룹핑됩니다. 이 덕분에 78번 발생한
+`IntensityOutOfThresholdLimit` 원시 이벤트가 단일 이슈 그룹으로
+변환됩니다.
+
+### 2. 케이스 검색 (`find_similar_cases`)
+
+새 이슈마다 KB를 스캔하면서 각 케이스를 스코어링합니다:
+
+```python
+score  =  +10  이슈 텍스트에 등장한 log_pattern 매치마다
+score  +=  +5  이슈 텍스트에 등장한 tag 매치마다
+score  +=  +2  이슈 텍스트에 등장한 title 단어(>3글자)마다
+```
+
+스코어 기준 상위 3개 케이스가 AI 프롬프트에 주입됩니다. 스코어 0인
+케이스는 노출되지 않습니다. 가중치는 무엇이 가장 중요한지를 반영합니다 —
+`log_pattern` 매치는 강한 신호 (엔지니어가 실제 에러 문자열에서 가져와
+적은 것), `tag` 매치는 중간 (PR 번호, 컴포넌트 이름), `title` 단어는 약한
+신호 (우연일 수 있음).
+
+### 3. 심각도 분류
+
+리포트의 색상 코딩용 작은 키워드 기반 휴리스틱:
+
+```
+error:    "message not understood", "exception", "hard tolerance"
+warning:  "alarm", "warning", "warningset", "tolerance",
+          "low", "below", "pulse sync", "idex"
+info:     그 외 전부
+```
+
+의도적으로 단순하게 — 리포트를 읽는 엔지니어보다 똑똑하려고 하지
+않습니다. 심각도는 힌트지 판단이 아닙니다.
+
+---
+
+## 지식 베이스 포맷
+
+`cases.json`은 케이스 객체들의 리스트입니다:
+
+```json
+[
+  {
+    "id":           "h1b1p1r1",
+    "title":        "JIT Stuck due to WAC Disabled Configuration",
+    "tags":         ["PR-186313", "Scheduler", "WAC", "JIT"],
+    "reproduction": "1. Set flow with WAC\n2. Select WAC as disabled...",
+    "log_patterns": ["receiveDisablingTags", "#WAC", "JIT misjudgment"],
+    "analysis":     "Flow with WAC disabled caused JIT misjudgment...",
+    "created_at":   "2025-04-16T10:00:00",
+    "updated_at":   "2025-04-16T10:00:00"
+  }
+]
+```
+
+케이스를 추가하는 세 가지 방법:
+
+1. **콘솔에서** — 각 AI 분석 후 스크립트가 "Save as reusable case?
+   (y/n)" 를 묻고 필드를 인터랙티브하게 받습니다.
+2. **HTML 리포트에서** — 분석된 이슈에서 "📂 Save as Case" 클릭, 모달에
+   입력 후 저장. 리포트가 업데이트된 `cases.json`을 다운로드해주면
+   디스크에서 교체합니다.
+3. **직접 편집** — 어떤 텍스트 에디터로든 `cases.json` 열어서 수정.
+   JSON 유효성만 유지하면 됩니다 (trailing comma 금지).
+
+---
+
+## 로드맵 (Roadmap)
+
+- [ ] 자동 스케줄 실행 (cron / Windows 작업 스케줄러 가이드)
+- [ ] 알려진 KB 케이스와 매칭되면 이메일 제목에 `[ACTION NEEDED]` 추가
+- [ ] 크로스 툴 비교 뷰 (2대 이상에서 동시 발생한 이슈)
+- [ ] 시간축 시각화 (하루 중 알람이 몰리는 시간대 파악)
+- [ ] Slack / Teams webhook 포스팅 (이메일과 병행)
+- [ ] 멀티 일자 트렌드 분석 (한 주간 재발 이슈 추적)
+
+---
+
+## 작성자
+
+Written by Matthew Lee.
